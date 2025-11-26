@@ -1,0 +1,5 @@
+{
+  "name": "Dual Defender: Shield & Sword",
+  "description": "A local co-op platformer where two players must survive waves of enemies. Player 1 wields a shield for defense and parrying, while Player 2 wields a sword for offense.",
+  "requestFramePermissions": []
+}
