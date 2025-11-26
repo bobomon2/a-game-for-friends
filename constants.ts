@@ -1,8 +1,10 @@
 
 export const GRAVITY = 0.6;
 export const FRICTION = 0.8;
+export const ACCELERATION = 1.5;
 export const MOVE_SPEED = 10;
 export const JUMP_FORCE = -16;
+export const SCREEN_SHAKE_DECAY = 0.9;
 
 export const CANVAS_WIDTH = 3000;
 export const CANVAS_HEIGHT = 1500;

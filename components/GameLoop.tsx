@@ -290,9 +290,19 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
            entity.vx *= 0.9; // Apply friction during stun
         } else {
             // Normal Movement
-            if (currentKeys.has('a')) { entity.vx = -C.MOVE_SPEED; entity.facing = -1; }
-            else if (currentKeys.has('d')) { entity.vx = C.MOVE_SPEED; entity.facing = 1; }
+            // ACCELERATION PHYSICS
+            if (currentKeys.has('a')) { 
+               entity.vx -= C.ACCELERATION;
+               entity.facing = -1; 
+            }
+            else if (currentKeys.has('d')) { 
+               entity.vx += C.ACCELERATION;
+               entity.facing = 1; 
+            }
             else { entity.vx *= C.FRICTION; }
+            
+            // Clamp speed
+            entity.vx = Math.max(Math.min(entity.vx, C.MOVE_SPEED), -C.MOVE_SPEED);
 
             // Double Jump Logic
             if (p1JumpReq.current) {
@@ -330,9 +340,19 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
             entity.hurtTimer!--;
             entity.vx *= 0.9;
         } else {
-            if (currentKeys.has('arrowleft')) { entity.vx = -C.MOVE_SPEED; entity.facing = -1; }
-            else if (currentKeys.has('arrowright')) { entity.vx = C.MOVE_SPEED; entity.facing = 1; }
+            // ACCELERATION PHYSICS
+            if (currentKeys.has('arrowleft')) { 
+               entity.vx -= C.ACCELERATION;
+               entity.facing = -1; 
+            }
+            else if (currentKeys.has('arrowright')) { 
+               entity.vx += C.ACCELERATION;
+               entity.facing = 1; 
+            }
             else { entity.vx *= C.FRICTION; }
+            
+            // Clamp speed
+            entity.vx = Math.max(Math.min(entity.vx, C.MOVE_SPEED), -C.MOVE_SPEED);
 
             // Double Jump Logic
             if (p2JumpReq.current) {
@@ -386,6 +406,13 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
               const dx = target.x - entity.x;
               const dy = target.y - entity.y;
               const dist = Math.hypot(dx, dy);
+              
+              // Trigger Attack Animation if close
+              if (dist < 60) {
+                  entity.isAttacking = true;
+              } else {
+                  entity.isAttacking = false;
+              }
 
               // Separation Force (Avoid stacking)
               let sepX = 0;
@@ -419,10 +446,16 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
                      const speed = entity.type === EntityType.ENEMY_NORMAL ? 4 : 6;
                      let dir = dx > 0 ? 1 : -1;
                      
-                     // Stop jittering if close
-                     if (Math.abs(dx) < 10) dir = 0;
+                     // Stop jittering if close (only if also vertically aligned)
+                     // If target is far below, don't stop moving, so we can fall off the edge
+                     if (Math.abs(dx) < 10 && Math.abs(dy) < 50) dir = 0;
+                     
+                     // Acceleration
+                     entity.vx += dir * C.ACCELERATION;
+                     if (sepX) entity.vx += sepX * 0.1;
+                     
+                     entity.vx = Math.max(Math.min(entity.vx, speed), -speed);
 
-                     entity.vx = (dir * speed) + sepX;
                      entity.facing = dx > 0 ? 1 : -1;
 
                      // ** SMART OBSTACLE AVOIDANCE **
@@ -444,16 +477,28 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
                            e.type === EntityType.PLATFORM && checkRectCollision(gapProbe, e)
                         );
                         
-                        // Jump if Wall ahead OR Gap ahead
-                        if (hasWall || !hasFloor) {
-                            // If jumping to cross a gap or wall, give a little boost
-                            entity.vy = C.JUMP_FORCE * 1.2;
-                            // Also ensure forward momentum
-                            entity.vx = entity.facing * (speed + 2);
+                        // If player is significantly below (>100px), we want to go down
+                        const targetIsBelow = dy > 100;
+
+                        // Jump if Wall ahead OR (Gap ahead AND Target is not below)
+                        // If target IS below and there is a gap, we do NOTHING (no jump) to walk off the edge.
+                        if (hasWall) {
+                             // Must jump walls
+                             entity.vy = C.JUMP_FORCE * 1.2;
+                             entity.vx = entity.facing * (speed + 2);
+                        } else if (!hasFloor) {
+                             // Gap detected.
+                             if (targetIsBelow) {
+                                 // Drop down. Don't jump.
+                             } else {
+                                 // Target is level or above, jump across gap.
+                                 entity.vy = C.JUMP_FORCE * 1.2;
+                                 entity.vx = entity.facing * (speed + 2);
+                             }
                         }
 
                         // Also jump if target is significantly above (original logic)
-                        const targetIsAbove = target.y < entity.y - 100;
+                        const targetIsAbove = dy < -100; // Negative dy means target is above
                         const stuck = Math.abs(entity.vx) < 1 && Math.abs(dx) > 50; 
                         
                         // Don't double jump if already jumping from wall logic
@@ -486,7 +531,7 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
                  entity.facing = dx > 0 ? 1 : -1;
 
                  // Ghost trail particles
-                 if (frameCount.current % 10 === 0) {
+                 if (frameCount.current % 4 === 0) {
                     particles.current.push({
                       id: Math.random().toString(),
                       x: entity.x + entity.w/2, y: entity.y + entity.h/2,
@@ -588,6 +633,8 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
                   // Boss Shockwave on Land
                   if (isBoss && entity.state === 'BOSS_SMASH' && entity.stateTimer && entity.stateTimer > 10) {
                      spawnParticles(entity.x + entity.w/2, entity.y + entity.h, '#fff', 30);
+                     // Screen Shake
+                     shakeScreen(20);
                   }
                 } else if (wasBelow && entity.vy < 0) {
                    // Hit ceiling
@@ -661,6 +708,7 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
               
               // Visual Feedback for Critical Hit
               spawnParticles(enemy.x, enemy.y, isCoopLinked ? '#fbbf24' : '#fca5a5', isCoopLinked ? 15 : 5);
+              shakeScreen(isCoopLinked ? 5 : 2); // Screen shake on hit
               
               if (enemy.hp <= 0 && enemy.type !== EntityType.BOSS) {
                   score.current += 1;
@@ -702,6 +750,7 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
             enemy.hurtTimer = 20; // Stun Enemy on Parry
             
             spawnParticles(enemy.x, enemy.y, isCoopLinked ? '#fbbf24' : '#93c5fd', 5);
+            shakeScreen(3);
 
             if (enemy.hp <= 0 && enemy.type !== EntityType.BOSS) {
                 score.current += 1;
@@ -732,6 +781,8 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
                  p1.vx = dir * force;
                  p1.vy = -6; 
                  p1.hurtTimer = 20; // Stun & Invulnerability window
+                 
+                 shakeScreen(5);
 
                  // Bounce enemy too
                  if (enemy.type !== EntityType.BOSS) {
@@ -767,6 +818,8 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
                  p2.vx = dir * force;
                  p2.vy = -6;
                  p2.hurtTimer = 20; // Stun & Invulnerability window
+                 
+                 shakeScreen(5);
 
                  if (enemy.type !== EntityType.BOSS) {
                     enemy.vx = -dir * force;
@@ -782,6 +835,7 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
         const explosionRect = { x: enemy.x - 100, y: enemy.y - 100, w: enemy.w + 200, h: enemy.h + 200 };
         if (p1 && checkRectCollision(explosionRect, p1) && !p1.isParrying) p1.hp -= C.DMG_BOMB;
         if (p2 && checkRectCollision(explosionRect, p2)) p2.hp -= C.DMG_BOMB;
+        shakeScreen(15);
       }
     });
 
@@ -795,6 +849,7 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
           p1.vx = (p1.x < spike.x ? -1 : 1) * 8;
           p1.hurtTimer = 30; // Longer stun for spike
           spawnParticles(p1.x + p1.w/2, p1.y + p1.h, '#ef4444', 5);
+          shakeScreen(5);
       }
       if (p2 && checkTouchCollision(spike, p2) && (p2.hurtTimer || 0) === 0) {
           p2.hp -= C.DMG_SPIKE;
@@ -803,6 +858,7 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
           p2.vx = (p2.x < spike.x ? -1 : 1) * 8;
           p2.hurtTimer = 30;
           spawnParticles(p2.x + p2.w/2, p2.y + p2.h, '#ef4444', 5);
+          shakeScreen(5);
       }
       
       // Enemies
@@ -811,7 +867,7 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
          if (enemy.type !== EntityType.BOSS && enemy.type !== EntityType.ENEMY_FLYER && checkTouchCollision(spike, enemy) && frameCount.current % 30 === 0 && enemy.state !== 'DYING') {
              enemy.hp -= 30; // Spikes hurt enemies a lot
              spawnParticles(enemy.x, enemy.y, enemy.color, 3);
-             if (enemy.hp <= 0 && enemy.type !== EntityType.BOSS) {
+             if (enemy.hp <= 0) {
                  score.current += 1;
                  enemy.state = 'DYING';
                  enemy.stateTimer = 30;
@@ -851,6 +907,12 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
     });
     particles.current = particles.current.filter(p => p.life > 0);
 
+    // Update Screen Shake
+    if (screenShake.current > 0) {
+       screenShake.current *= C.SCREEN_SHAKE_DECAY;
+       if (screenShake.current < 0.5) screenShake.current = 0;
+    }
+
     // Victory/Defeat
     if (boss && boss.hp <= 0) {
        setGameState(GameState.VICTORY);
@@ -873,6 +935,12 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
     }
 
   }, [onMetricsUpdate, setGameState]);
+
+  // Screen Shake Ref
+  const screenShake = useRef(0);
+  const shakeScreen = (amount: number) => {
+     screenShake.current = Math.min(screenShake.current + amount, 30);
+  };
 
   // --- DRAWING FUNCTIONS ---
 
@@ -943,6 +1011,33 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
       ctx.restore();
   };
 
+  const drawShadowClaw = (ctx: CanvasRenderingContext2D, x: number, y: number, facing: number) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(facing, 1);
+      
+      // Spectral Claw Swipe Shape
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(20, -10);
+      ctx.lineTo(30, 0);
+      ctx.lineTo(25, 10);
+      ctx.lineTo(0, 5);
+      ctx.fill();
+
+      // Sharp tips
+      ctx.fillStyle = '#ef4444';
+      ctx.shadowBlur = 5;
+      ctx.shadowColor = '#ef4444';
+      ctx.beginPath();
+      ctx.moveTo(30, 0); ctx.lineTo(40, -5); ctx.lineTo(32, -2); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(25, 10); ctx.lineTo(35, 15); ctx.lineTo(28, 12); ctx.fill();
+
+      ctx.restore();
+  };
+
   const drawGhostEnemy = (ctx: CanvasRenderingContext2D, e: Entity) => {
      // Pixel art ghost
      const bob = Math.sin(frameCount.current * 0.15) * 4;
@@ -1001,6 +1096,11 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
      ctx.fillRect(baseX + 16, baseY + 30, 2, 4);
      ctx.fillRect(baseX + 20, baseY + 30, 2, 4);
      ctx.fillRect(baseX + 24, baseY + 30, 2, 4);
+
+     // ATTACK ANIMATION: CLAW
+     if (e.isAttacking) {
+         drawShadowClaw(ctx, baseX + 35, baseY + 25, 1);
+     }
 
      // Health Bar (Only if alive)
      if (e.hp > 0 && e.state !== 'DYING') {
@@ -1335,14 +1435,30 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
        ctx.fillRect(e.x + 18 + eyeDir + 2, e.y - 2, 6, 4);
        ctx.shadowBlur = 0;
 
-       // Arms (Zombie pose)
+       // Arms (Zombie pose + Attack Animation)
        ctx.fillStyle = '#94a3b8';
-       const armY = e.y + 15 + (walkCycle * 2);
+       let armY = e.y + 15 + (walkCycle * 2);
+       
+       ctx.save();
+       // Pivot at shoulder
+       const shoulderX = e.facing === 1 ? e.x + 25 : e.x + 15;
+       const shoulderY = e.y + 15;
+       ctx.translate(shoulderX, shoulderY);
+
+       if (e.isAttacking) {
+           // Attack Swipe
+           const attackAngle = Math.sin(frameCount.current * 0.5) * 1.5; // Fast swing
+           ctx.rotate(attackAngle * e.facing);
+       }
+
+       ctx.translate(-shoulderX, -shoulderY);
+       
        if (e.facing === 1) {
           ctx.fillRect(e.x + 25, armY, 20, 8);
        } else {
           ctx.fillRect(e.x - 5, armY, 20, 8);
        }
+       ctx.restore();
 
        // Health Bar
        ctx.fillStyle = '#1e293b';
@@ -1506,21 +1622,122 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Shake transform
+    const shakeX = (Math.random() - 0.5) * screenShake.current;
+    const shakeY = (Math.random() - 0.5) * screenShake.current;
+
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
     // Clear Canvas
     ctx.fillStyle = C.COLORS.BACKGROUND;
-    ctx.fillRect(0, 0, C.CANVAS_WIDTH, C.CANVAS_HEIGHT);
+    ctx.fillRect(-shakeX, -shakeY, C.CANVAS_WIDTH, C.CANVAS_HEIGHT);
     
-    // Background Grid Effect
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 2;
+    // ---------------------------------
+    // BACKGROUND - SYNTHWAVE / CYBERPUNK
+    // ---------------------------------
+    
+    // 1. Horizon Line
+    const horizonY = C.CANVAS_HEIGHT * 0.7;
+    
+    // 2. Retro Sun
+    const sunGrad = ctx.createLinearGradient(0, horizonY - 400, 0, horizonY);
+    sunGrad.addColorStop(0, '#facc15'); // Yellow Top
+    sunGrad.addColorStop(0.5, '#f43f5e'); // Pink Mid
+    sunGrad.addColorStop(1, '#a855f7'); // Purple Bottom
+    
+    const sunX = C.CANVAS_WIDTH / 2;
+    const sunY = horizonY - 50;
+    const sunRadius = 300;
+    
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = sunGrad;
     ctx.beginPath();
-    for (let x = 0; x < C.CANVAS_WIDTH; x += 100) {
-      ctx.moveTo(x, 0); ctx.lineTo(x, C.CANVAS_HEIGHT);
+    ctx.arc(sunX, sunY, sunRadius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Sun Blinds (Horizontal Lines cutting the sun)
+    ctx.fillStyle = C.COLORS.BACKGROUND;
+    for (let i = 0; i < 10; i++) {
+        const h = 5 + (i * 3);
+        const y = sunY + 50 + (i * 20);
+        ctx.fillRect(sunX - sunRadius, y, sunRadius * 2, h);
     }
-    for (let y = 0; y < C.CANVAS_HEIGHT; y += 100) {
-      ctx.moveTo(0, y); ctx.lineTo(C.CANVAS_WIDTH, y);
+    ctx.restore();
+
+    // 3. Parallax Mountains
+    const drawMountains = (speed: number, color: string, heightMult: number, offset: number) => {
+       const scroll = frameCount.current * speed;
+       ctx.fillStyle = color;
+       ctx.beginPath();
+       ctx.moveTo(0, C.CANVAS_HEIGHT);
+       for (let x = 0; x <= C.CANVAS_WIDTH; x += 100) {
+           const noise = Math.sin((x + scroll + offset) * 0.005) * 100 + Math.sin((x + scroll) * 0.02) * 50;
+           ctx.lineTo(x, horizonY - Math.abs(noise) * heightMult);
+       }
+       ctx.lineTo(C.CANVAS_WIDTH, C.CANVAS_HEIGHT);
+       ctx.fill();
+    };
+
+    drawMountains(0.5, '#312e81', 1.5, 0); // Back (Indigo)
+    drawMountains(1.2, '#1e1b4b', 0.8, 500); // Front (Darker Indigo)
+
+    // 4. Perspective Grid (Moving Floor)
+    ctx.save();
+    const gridSpeed = (frameCount.current * 4) % 100;
+    
+    // Vertical Lines (Perspective)
+    ctx.strokeStyle = '#c026d3'; // Fuchsia
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.5;
+    ctx.shadowColor = '#d946ef';
+    ctx.shadowBlur = 10;
+    
+    ctx.beginPath();
+    // Vanishing Point is center horizon
+    const vpX = C.CANVAS_WIDTH / 2;
+    const vpY = horizonY;
+    
+    for (let i = -20; i <= 40; i++) {
+       // X position at bottom of screen
+       const xBot = (i * 200); 
+       ctx.moveTo(vpX, vpY);
+       ctx.lineTo(xBot, C.CANVAS_HEIGHT);
     }
     ctx.stroke();
+
+    // Horizontal Lines (Moving forward)
+    ctx.strokeStyle = '#ec4899'; // Pink
+    ctx.beginPath();
+    // Draw logarithmic horizontal lines for depth perception
+    for (let i = 0; i < 20; i++) {
+        // As i increases, lines get closer to horizon
+        const yOffset = Math.pow(i, 2.5) + gridSpeed; 
+        const y = C.CANVAS_HEIGHT - yOffset;
+        if (y > horizonY) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(C.CANVAS_WIDTH, y);
+        }
+    }
+    ctx.stroke();
+    
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+
+    // 5. Stars
+    ctx.fillStyle = '#fff';
+    for(let i=0; i<50; i++) {
+        const starX = (i * 137 + frameCount.current * 0.2) % C.CANVAS_WIDTH;
+        const starY = (i * 67) % (horizonY);
+        const size = (i % 3) + 1;
+        ctx.fillRect(starX, starY, size, size);
+    }
+
+    // ---------------------------------
+    // END BACKGROUND
+    // ---------------------------------
 
     // Draw Synergy Link
     const p1 = entities.current.find(e => e.type === EntityType.PLAYER_1);
@@ -1537,6 +1754,8 @@ const GameLoop: React.FC<GameLoopProps> = ({ gameState, setGameState, onMetricsU
     
     // Draw Particles
     drawParticles(ctx);
+
+    ctx.restore(); // Undo Shake
 
   }, []);
 
